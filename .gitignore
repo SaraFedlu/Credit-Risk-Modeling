@@ -1,0 +1,57 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+
+# data files
+data/
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Logs and temporary files
+*.log
+*.xlsx
+*.json
+*.parquet
+*.hdf5
+*.db
+*.sql
+*.sqlite3
+*.tmp
+*.bak
+*.swp
+*.swo
+
+# Compiled or processed files
+*.out
+*.class
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# Unit test / Coverage reports
+*.coverage
+coverage.xml
+htmlcov/
+
+# Python egg files
+*.egg
+*.egg-info/
+dist/
+build/
+
+# IDE-specific files
+.vscode/
+.idea/
+
+# Dependency files
+requirements.txt.lock
+pip-log.txt
+
+# Environment files
+.env
+*.env
