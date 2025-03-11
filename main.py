@@ -29,6 +29,7 @@ def handle_outliers_log_transform(df, columns):
 
 # Preprocessing function that mimics steps from the notebooks
 def preprocess_data(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.drop(columns=['CurrencyCode', 'CountryCode'])
     # Apply log transformation to Amount and Value
     numerical_features = ['Amount', 'Value']
     df = handle_outliers_log_transform(df, numerical_features)
@@ -65,30 +66,68 @@ def preprocess_data(df: pd.DataFrame) -> pd.DataFrame:
     df['Transaction_Day'] = df['TransactionStartTime'].dt.day
     df['Transaction_Month'] = df['TransactionStartTime'].dt.month
     df['Transaction_Year'] = df['TransactionStartTime'].dt.year
-    
-    # Label Encoding for ordinal encoding
-    label_encoder = LabelEncoder()
-    categorical_cols = ['ProviderId', 'ProductCategory', 'ChannelId']
-    for col in categorical_cols:
-        df[col + '_Encoded'] = label_encoder.fit_transform(df[col])
 
-    # One-Hot Encoding
-    df = pd.get_dummies(df, columns=categorical_cols, drop_first=True)
+    categorical_cols = ['ProviderId', 'ProductCategory', 'ChannelId']
+    
+    # Load saved artifacts
+    ohe = joblib.load('data/ohe_encoder.pkl')
+    encoded_feature_names = pd.read_csv('data/encoded_features.csv').squeeze()
+
+    # Transform new data
+    new_encoded = ohe.transform(df[categorical_cols])
+    new_encoded_df = pd.DataFrame(new_encoded, columns=ohe.get_feature_names_out())
+
+    # Ensure column consistency
+    new_encoded_df = new_encoded_df.reindex(columns=encoded_feature_names, fill_value=0)
+
+    # Combine with non-categorical features
+    numerical_cols = [col for col in df.columns if col not in categorical_cols]
+    df = pd.concat([df[numerical_cols], new_encoded_df], axis=1)
 
     # Impute missing numeric values using the median
     numeric_cols = df.select_dtypes(include=[np.number]).columns
     for col in numeric_cols:
         df[col] = df[col].fillna(df[col].median())
     
-    # 4. Normalize numeric features using min-max scaling
+    # Normalize numeric features
     scaler = StandardScaler()
-    df[numeric_cols] = scaler.fit_transform(df[numeric_cols])
+    numerical_cols = ['Total_Transaction_Amount', 'Avg_Transaction_Amount',
+                  'Transaction_Count', 'Std_Transaction_Amount', 'Amount_log', 'Value_log']
+    df[numerical_cols] = scaler.fit_transform(df[numerical_cols])
 
     exclude_columns = ['TransactionId', 'BatchId', 'AccountId', 'SubscriptionId', 'CustomerId', 'TransactionStartTime']
     data_for_binning = df.drop(columns=exclude_columns)
 
     data_binned = sc.woebin_ply(data_for_binning, bins)
-    
+    low_iv_features_woe = ['ProviderId_ProviderId_3', 'ProductCategory_Other', 'ProductCategory_tv', 'ChannelId_ChannelId_5', 'ProviderId_Other', 'ProductCategory_data_bundles', 'ProductCategory_utility_bill', 'ChannelId_ChannelId_1']
+    data_binned.drop(columns=low_iv_features_woe, inplace=True)
+
+    customer_ids = df[['CustomerId']]
+    customer_ids = customer_ids.loc[data_binned.index]
+
+    # Merge CustomerId back into the data_binned subset
+    data_merged = data_binned.copy()
+    data_merged['CustomerId'] = customer_ids['CustomerId']
+
+    df['TransactionStartTime'] = pd.to_datetime(df['TransactionStartTime'])
+    # Recency: Days since the last transaction
+    recency = df.groupby('CustomerId')['TransactionStartTime'].max().reset_index()
+    recency['Recency'] = (df['TransactionStartTime'].max() - recency['TransactionStartTime']).dt.days
+    recency.drop(columns='TransactionStartTime', inplace=True)
+
+    # Frequency: Total transactions per customer
+    frequency = df.groupby('CustomerId')['TransactionId'].count().reset_index()
+    frequency.rename(columns={'TransactionId': 'Frequency'}, inplace=True)
+
+    # Monetary: Total and average transaction amounts
+    monetary = df.groupby('CustomerId')['Amount'].agg(['sum', 'mean']).reset_index()
+    monetary.rename(columns={'sum': 'Monetary_Total', 'mean': 'Monetary_Avg'}, inplace=True)
+
+    # Combine RFMS metrics
+    rfms = recency.merge(frequency, on='CustomerId').merge(monetary, on='CustomerId')
+
+    # Merge RFMS metrics into data_merged
+    data_merged = data_merged.merge(rfms, on='CustomerId', how='left')
     return data_binned
 
 # Simple UI for file upload
